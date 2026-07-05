@@ -15,20 +15,19 @@ struct PINEntryView: View {
     private let keys: [String] = ["1","2","3","4","5","6","7","8","9","bio","0","del"]
 
     var body: some View {
-        VStack(spacing: 28) {
+        VStack(spacing: 30) {
             Spacer(minLength: 8)
 
-            Image(systemName: "lock.shield")
-                .font(.system(size: 44, weight: .regular))
-                .foregroundStyle(.tint)
+            emblem
 
             VStack(spacing: 6) {
                 Text(title)
-                    .font(.title3.weight(.semibold))
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.white)
                 if let subtitle {
                     Text(subtitle)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.6))
                         .multilineTextAlignment(.center)
                 }
             }
@@ -43,75 +42,111 @@ struct PINEntryView: View {
         .onChange(of: pin) { value in
             if value.count == maxLen {
                 let entered = value
-                // 次の入力に備えて即クリア
                 DispatchQueue.main.async { pin = "" }
                 onComplete(entered)
             }
         }
     }
 
+    private var emblem: some View {
+        ZStack {
+            Circle()
+                .fill(Theme.accentGradient)
+                .frame(width: 84, height: 84)
+                .shadow(color: Theme.accent.opacity(0.5), radius: 18, y: 6)
+            Image(systemName: "lock.shield.fill")
+                .font(.system(size: 38, weight: .medium))
+                .foregroundStyle(.white)
+        }
+    }
+
     private var dots: some View {
-        HStack(spacing: 18) {
+        HStack(spacing: 20) {
             ForEach(0..<maxLen, id: \.self) { i in
                 Circle()
-                    .strokeBorder(Color.secondary, lineWidth: 1.5)
-                    .background(Circle().fill(i < pin.count ? Color.accentColor : Color.clear))
-                    .frame(width: 16, height: 16)
+                    .strokeBorder(Color.white.opacity(0.35), lineWidth: 1.5)
+                    .background(
+                        Circle().fill(i < pin.count ? Theme.accent : Color.clear)
+                    )
+                    .frame(width: 15, height: 15)
+                    .shadow(color: i < pin.count ? Theme.accent.opacity(0.7) : .clear, radius: 6)
+                    .animation(.spring(response: 0.25, dampingFraction: 0.6), value: pin.count)
             }
         }
         .frame(height: 20)
     }
 
     private var pad: some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 24), count: 3)
-        return LazyVGrid(columns: columns, spacing: 20) {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 26), count: 3)
+        return LazyVGrid(columns: columns, spacing: 22) {
             ForEach(keys, id: \.self) { keyLabel in
                 keyButton(keyLabel)
             }
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, 28)
     }
 
     @ViewBuilder
     private func keyButton(_ label: String) -> some View {
         switch label {
         case "del":
-            Button {
+            padButton(filled: false) {
                 if !pin.isEmpty { pin.removeLast() }
-            } label: {
+            } content: {
                 Image(systemName: "delete.left")
                     .font(.title2)
-                    .frame(width: 72, height: 72)
+                    .foregroundStyle(.white.opacity(0.85))
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
 
         case "bio":
             if showBiometric {
-                Button {
+                padButton(filled: false) {
                     onBiometric?()
-                } label: {
+                } content: {
                     Image(systemName: "faceid")
                         .font(.title2)
-                        .frame(width: 72, height: 72)
+                        .foregroundStyle(Theme.accentSoft)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
             } else {
-                Color.clear.frame(width: 72, height: 72)
+                Color.clear.frame(width: 74, height: 74)
             }
 
         default:
-            Button {
+            padButton(filled: true) {
                 if pin.count < maxLen { pin.append(label) }
-            } label: {
+            } content: {
                 Text(label)
                     .font(.title.weight(.regular))
-                    .frame(width: 72, height: 72)
-                    .background(Circle().fill(Color.secondary.opacity(0.15)))
+                    .foregroundStyle(.white)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
         }
+    }
+
+    private func padButton<C: View>(
+        filled: Bool,
+        action: @escaping () -> Void,
+        @ViewBuilder content: () -> C
+    ) -> some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(filled ? Color.white.opacity(0.08) : Color.clear)
+                    .overlay(
+                        Circle().strokeBorder(Color.white.opacity(filled ? 0.12 : 0), lineWidth: 1)
+                    )
+                content()
+            }
+            .frame(width: 74, height: 74)
+        }
+        .buttonStyle(PadButtonStyle())
+    }
+}
+
+/// 押下時に軽く縮むボタンスタイル。
+private struct PadButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }

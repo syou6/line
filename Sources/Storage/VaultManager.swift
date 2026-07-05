@@ -20,16 +20,16 @@ enum VaultManager {
         KeychainStore.get(saltAccount(k)) != nil && KeychainStore.get(verifierAccount(k)) != nil
     }
 
-    /// 新しい保管庫を作成する（空の状態）。
-    static func create(kind: VaultKind, pin: String) throws {
+    /// 新しい保管庫を作成する。seed を渡すと初期メモを入れて作成する。
+    static func create(kind: VaultKind, pin: String, seed: [VaultItem] = []) throws {
         let salt = CryptoService.makeSalt()
         let key = CryptoService.deriveKey(pin: pin, salt: salt)
         let verifier = try CryptoService.encrypt(verifierToken, key: key)
-        let emptyBlob = try encodeAndEncrypt([], key: key)
+        let blob = try encodeAndEncrypt(seed, key: key)
 
         KeychainStore.set(salt, for: saltAccount(kind))
         KeychainStore.set(verifier, for: verifierAccount(kind))
-        FileStore.write(emptyBlob, name: dataFile(kind))
+        FileStore.write(blob, name: dataFile(kind))
     }
 
     /// 入力PINに一致する保管庫を探し、(種別, 鍵) を返す。なければnil。

@@ -9,6 +9,7 @@ struct PrivacyVaultApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(state)
+                .tint(Theme.accent)
                 .preferredColorScheme(.dark)
         }
         .onChange(of: scenePhase) { newPhase in

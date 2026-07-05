@@ -13,35 +13,42 @@ struct PINSetupSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack {
-                if let first {
-                    PINEntryView(title: "確認のためもう一度", subtitle: subtitle) { confirm in
-                        if confirm == first {
-                            onDone(confirm)
-                            dismiss()
-                        } else {
-                            self.first = nil
-                            mismatch = true
-                        }
-                    }
-                } else {
-                    PINEntryView(title: title, subtitle: subtitle) { pin in
-                        first = pin
-                        mismatch = false
-                    }
-                }
-
-                if mismatch {
-                    Text("PINが一致しませんでした")
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .padding(.bottom)
-                }
+            ZStack {
+                BrandBackground()
+                content
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("キャンセル") { dismiss() }
                 }
+            }
+        }
+    }
+
+    private var content: some View {
+        VStack {
+            if let first {
+                PINEntryView(title: "確認のためもう一度", subtitle: subtitle) { confirm in
+                    if confirm == first {
+                        onDone(confirm)
+                        dismiss()
+                    } else {
+                        self.first = nil
+                        mismatch = true
+                    }
+                }
+            } else {
+                PINEntryView(title: title, subtitle: subtitle) { pin in
+                    first = pin
+                    mismatch = false
+                }
+            }
+
+            if mismatch {
+                Text("PINが一致しませんでした")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.accentSoft)
+                    .padding(.bottom)
             }
         }
     }

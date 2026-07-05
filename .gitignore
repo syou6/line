@@ -7,8 +7,9 @@ DerivedData/
 xcuserdata/
 *.xcuserstate
 
-# XcodeGen で生成されるInfo.plist
+# XcodeGen で生成されるファイル
 Sources/Resources/Info.generated.plist
+Sources/Resources/PrivacyVault.entitlements
 
 # macOS
 .DS_Store

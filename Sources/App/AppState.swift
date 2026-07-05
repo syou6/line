@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     @Published private(set) var activeKind: VaultKind?
     @Published private(set) var items: [VaultItem] = []
     @Published private(set) var biometricEnabled: Bool
+    @Published private(set) var iCloudSyncEnabled: Bool
     @Published var errorMessage: String?
 
     private var key: SymmetricKey?
@@ -25,6 +26,7 @@ final class AppState: ObservableObject {
     init() {
         phase = VaultManager.isSetup(.primary) ? .locked : .needsSetup
         biometricEnabled = BiometricKeyStore.isEnabled
+        iCloudSyncEnabled = CloudSyncService.isEnabled
     }
 
     // MARK: - 解錠 / 施錠
@@ -73,6 +75,58 @@ final class AppState: ObservableObject {
         self.items = VaultManager.loadItems(kind: kind, key: key)
         self.errorMessage = nil
         self.phase = .unlocked
+        syncFromCloud()
+    }
+
+    // MARK: - iCloud 同期
+
+    func setICloudSync(_ on: Bool) {
+        CloudSyncService.isEnabled = on
+        iCloudSyncEnabled = on
+        if on { syncFromCloud() }
+    }
+
+    /// リモートを取得してローカルとマージ（item単位、updatedAtが新しい方を採用）、その後アップロード。
+    func syncFromCloud() {
+        guard iCloudSyncEnabled, let key, let kind = activeKind else { return }
+        Task {
+            guard await CloudSyncService.shared.accountAvailable() else { return }
+            if let blob = try? await CloudSyncService.shared.fetchBlob(kind: kind),
+               let plain = try? CryptoService.decrypt(blob, key: key),
+               let remote = try? JSONDecoder().decode(PersistedVault.self, from: plain) {
+                let merged = Self.merge(local: items, remote: remote.items)
+                if merged != items {
+                    items = merged.sorted { $0.updatedAt > $1.updatedAt }
+                    VaultManager.saveItems(items, kind: kind, key: key)
+                }
+            }
+            pushToCloud()
+        }
+    }
+
+    private func pushToCloud() {
+        guard iCloudSyncEnabled, let key, let kind = activeKind else { return }
+        let snapshot = items
+        Task {
+            guard await CloudSyncService.shared.accountAvailable() else { return }
+            if let data = try? JSONEncoder().encode(PersistedVault(items: snapshot)),
+               let blob = try? CryptoService.encrypt(data, key: key) {
+                try? await CloudSyncService.shared.uploadBlob(blob, kind: kind)
+            }
+        }
+    }
+
+    private static func merge(local: [VaultItem], remote: [VaultItem]) -> [VaultItem] {
+        var byID: [UUID: VaultItem] = [:]
+        for item in local { byID[item.id] = item }
+        for item in remote {
+            if let existing = byID[item.id] {
+                if item.updatedAt > existing.updatedAt { byID[item.id] = item }
+            } else {
+                byID[item.id] = item
+            }
+        }
+        return Array(byID.values)
     }
 
     // MARK: - メモ CRUD
@@ -88,12 +142,14 @@ final class AppState: ObservableObject {
         }
         items.sort { $0.updatedAt > $1.updatedAt }
         VaultManager.saveItems(items, kind: kind, key: key)
+        pushToCloud()
     }
 
     func delete(at offsets: IndexSet) {
         guard let key, let kind = activeKind else { return }
         items.remove(atOffsets: offsets)
         VaultManager.saveItems(items, kind: kind, key: key)
+        pushToCloud()
     }
 
     // MARK: - 設定
@@ -128,7 +184,7 @@ final class AppState: ObservableObject {
             if VaultManager.isSetup(.decoy) {
                 VaultManager.removeVault(.decoy)
             }
-            try VaultManager.create(kind: .decoy, pin: pin)
+            try VaultManager.create(kind: .decoy, pin: pin, seed: DecoySeed.items())
             return true
         } catch {
             errorMessage = "おとり保管庫の作成に失敗しました"
@@ -138,6 +194,9 @@ final class AppState: ObservableObject {
 
     func removeDecoy() {
         VaultManager.removeVault(.decoy)
+        if iCloudSyncEnabled {
+            Task { await CloudSyncService.shared.deleteBlob(kind: .decoy) }
+        }
     }
 
     @discardableResult
@@ -156,12 +215,21 @@ final class AppState: ObservableObject {
     }
 
     /// 緊急ワイプ: 全データを削除し、初期設定からやり直しになる。
-    func wipeEverything() {
+    /// includeCloud=true なら iCloud 上の暗号文レコードも削除する。
+    func wipeEverything(includeCloud: Bool = true) {
+        if includeCloud && iCloudSyncEnabled {
+            Task {
+                await CloudSyncService.shared.deleteBlob(kind: .primary)
+                await CloudSyncService.shared.deleteBlob(kind: .decoy)
+            }
+        }
         VaultManager.wipeAll()
+        CloudSyncService.isEnabled = false
         key = nil
         activeKind = nil
         items = []
         biometricEnabled = false
+        iCloudSyncEnabled = false
         errorMessage = nil
         phase = .needsSetup
     }

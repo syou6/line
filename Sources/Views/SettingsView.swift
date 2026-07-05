@@ -11,63 +11,21 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("セキュリティ") {
-                    Button {
-                        state.lock()
-                    } label: {
-                        Label("今すぐロック", systemImage: "lock")
-                    }
-
-                    Button {
-                        showChangePIN = true
-                    } label: {
-                        Label("PINを変更", systemImage: "key")
-                    }
-
+            ZStack {
+                BrandBackground()
+                Form {
+                    securitySection
                     if state.biometricAvailable && !state.isDecoySession {
-                        Toggle(isOn: biometricBinding) {
-                            Label("生体認証で解錠", systemImage: "faceid")
-                        }
+                        biometricSection
                     }
-                }
-
-                if !state.isDecoySession {
-                    Section {
-                        if state.decoyConfigured {
-                            Button {
-                                showDecoySetup = true
-                            } label: {
-                                Label("おとりPINを変更", systemImage: "eye.slash")
-                            }
-                            Button(role: .destructive) {
-                                confirmRemoveDecoy = true
-                            } label: {
-                                Label("おとり保管庫を削除", systemImage: "trash")
-                            }
-                        } else {
-                            Button {
-                                showDecoySetup = true
-                            } label: {
-                                Label("おとりPINを設定", systemImage: "eye.slash")
-                            }
-                        }
-                    } header: {
-                        Text("おとり保管庫")
-                    } footer: {
-                        Text("本来のPINとは別のPINを設定できます。そのPINを入力すると、本来の内容とは切り離された別の空の保管庫が開きます。PINの開示を強要された場合などに、本来の保管庫を守るための機能です。")
+                    iCloudSection
+                    if !state.isDecoySession {
+                        decoySection
                     }
+                    wipeSection
                 }
-
-                Section {
-                    Button(role: .destructive) {
-                        confirmWipe = true
-                    } label: {
-                        Label("全データを消去", systemImage: "exclamationmark.triangle")
-                    }
-                } footer: {
-                    Text("すべての保管庫・メモ・鍵を端末から完全に削除します。取り消せません。")
-                }
+                .scrollContentBackground(.hidden)
+                .tint(Theme.accent)
             }
             .navigationTitle("設定")
             .sheet(isPresented: $showChangePIN) {
@@ -93,20 +51,117 @@ struct SettingsView: View {
                 }
                 Button("キャンセル", role: .cancel) {}
             }
-            .overlay(alignment: .bottom) {
-                if let toast {
-                    Text(toast)
-                        .font(.footnote)
-                        .padding(.horizontal, 16).padding(.vertical, 10)
-                        .background(.thinMaterial, in: Capsule())
-                        .padding(.bottom, 24)
-                        .transition(.opacity)
-                        .task {
-                            try? await Task.sleep(nanoseconds: 2_000_000_000)
-                            self.toast = nil
-                        }
+            .overlay(alignment: .bottom) { toastView }
+        }
+    }
+
+    // MARK: - Sections
+
+    private var securitySection: some View {
+        Section("セキュリティ") {
+            Button {
+                state.lock()
+            } label: {
+                settingRow("今すぐロック", systemImage: "lock.fill", tint: Theme.accent)
+            }
+            Button {
+                showChangePIN = true
+            } label: {
+                settingRow("PINを変更", systemImage: "key.fill", tint: Theme.accent)
+            }
+        }
+    }
+
+    private var biometricSection: some View {
+        Section {
+            Toggle(isOn: biometricBinding) {
+                settingRow("生体認証で解錠", systemImage: "faceid", tint: Theme.accent)
+            }
+        } footer: {
+            Text("Face ID / Touch ID でロックを解除します。鍵は生体認証付きのKeychainに保管されます。")
+        }
+    }
+
+    private var iCloudSection: some View {
+        Section {
+            Toggle(isOn: iCloudBinding) {
+                settingRow("iCloud同期", systemImage: "icloud.fill", tint: Theme.accent)
+            }
+            if state.iCloudSyncEnabled {
+                Button {
+                    state.syncFromCloud()
+                    toast = "同期しました"
+                } label: {
+                    settingRow("今すぐ同期", systemImage: "arrow.triangle.2.circlepath", tint: Theme.accent)
                 }
             }
+        } header: {
+            Text("iCloud")
+        } footer: {
+            Text("メモは端末内で暗号化してから同期するため、クラウド上には暗号文しか保存されません。同じPINを設定した端末どうしで内容を共有できます。")
+        }
+    }
+
+    private var decoySection: some View {
+        Section {
+            if state.decoyConfigured {
+                Button { showDecoySetup = true } label: {
+                    settingRow("おとりPINを変更", systemImage: "eye.slash.fill", tint: .orange)
+                }
+                Button(role: .destructive) { confirmRemoveDecoy = true } label: {
+                    settingRow("おとり保管庫を削除", systemImage: "trash.fill", tint: .red)
+                }
+            } else {
+                Button { showDecoySetup = true } label: {
+                    settingRow("おとりPINを設定", systemImage: "eye.slash.fill", tint: .orange)
+                }
+            }
+        } header: {
+            Text("おとり保管庫")
+        } footer: {
+            Text("本来のPINとは別のPINを設定できます。そのPINを入力すると、本来の内容とは切り離された別の保管庫が開きます。PINの開示を強要された場合などに本来の内容を守るための機能です。")
+        }
+    }
+
+    private var wipeSection: some View {
+        Section {
+            Button(role: .destructive) { confirmWipe = true } label: {
+                settingRow("全データを消去", systemImage: "exclamationmark.triangle.fill", tint: .red)
+            }
+        } footer: {
+            Text("すべての保管庫・メモ・鍵を端末（および同期済みならiCloud）から完全に削除します。取り消せません。")
+        }
+    }
+
+    // MARK: - Parts
+
+    private func settingRow(_ title: String, systemImage: String, tint: Color) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(0.9), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            Text(title)
+                .foregroundStyle(.white)
+        }
+    }
+
+    @ViewBuilder
+    private var toastView: some View {
+        if let toast {
+            Text(toast)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Theme.surfaceStroke, lineWidth: 1))
+                .padding(.bottom, 28)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .task {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    withAnimation { self.toast = nil }
+                }
         }
     }
 
@@ -116,6 +171,13 @@ struct SettingsView: View {
             set: { on in
                 if on { state.enableBiometrics() } else { state.disableBiometrics() }
             }
+        )
+    }
+
+    private var iCloudBinding: Binding<Bool> {
+        Binding(
+            get: { state.iCloudSyncEnabled },
+            set: { state.setICloudSync($0) }
         )
     }
 }

@@ -1,35 +1,56 @@
 import SwiftUI
 
+/// 並び順の選択肢。
+enum NoteSortOrder: String, CaseIterable, Identifiable {
+    case updated = "更新が新しい順"
+    case title = "タイトル順"
+    var id: String { rawValue }
+}
+
 struct VaultListView: View {
     @EnvironmentObject private var state: AppState
     @State private var editing: VaultItem?
     @State private var showingNew = false
     @State private var query = ""
     @State private var selectedTag: String?
+    @State private var selectedFolder: String?
+    @State private var sortOrder: NoteSortOrder = .updated
+
+    // MARK: - 派生データ
 
     private var allTags: [String] {
-        var seen = Set<String>()
-        var ordered: [String] = []
-        for item in state.items {
-            for tag in item.tags where !seen.contains(tag) {
-                seen.insert(tag)
-                ordered.append(tag)
-            }
-        }
-        return ordered.sorted()
+        Array(Set(state.items.flatMap(\.tags))).sorted()
+    }
+
+    private var allFolders: [String] {
+        Array(Set(state.items.compactMap(\.folder))).sorted()
     }
 
     private var filtered: [VaultItem] {
-        state.items.filter { item in
+        let q = query.trimmingCharacters(in: .whitespaces)
+        var result = state.items.filter { item in
             let matchesTag = selectedTag == nil || item.tags.contains(selectedTag!)
-            let q = query.trimmingCharacters(in: .whitespaces)
+            let matchesFolder = selectedFolder == nil || item.folder == selectedFolder
             let matchesQuery = q.isEmpty
                 || item.title.localizedCaseInsensitiveContains(q)
                 || item.body.localizedCaseInsensitiveContains(q)
                 || item.tags.contains { $0.localizedCaseInsensitiveContains(q) }
-            return matchesTag && matchesQuery
+                || (item.folder?.localizedCaseInsensitiveContains(q) ?? false)
+            return matchesTag && matchesFolder && matchesQuery
         }
+        switch sortOrder {
+        case .updated:
+            result.sort { $0.updatedAt > $1.updatedAt }
+        case .title:
+            result.sort { $0.title.localizedCompare($1.title) == .orderedAscending }
+        }
+        return result
     }
+
+    private var pinned: [VaultItem] { filtered.filter(\.isPinned) }
+    private var unpinned: [VaultItem] { filtered.filter { !$0.isPinned } }
+
+    // MARK: - Body
 
     var body: some View {
         NavigationStack {
@@ -41,12 +62,13 @@ struct VaultListView: View {
                     listContent
                 }
             }
-            .navigationTitle("メモ")
+            .navigationTitle(selectedFolder ?? "メモ")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     if state.isDecoySession { decoyBadge }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    filterMenu
                     Button { showingNew = true } label: {
                         Image(systemName: "plus")
                             .font(.headline)
@@ -66,17 +88,54 @@ struct VaultListView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
-            ForEach(filtered) { item in
-                Button { editing = item } label: { row(for: item) }
-                    .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+            if !pinned.isEmpty {
+                Section {
+                    ForEach(pinned) { item in itemRow(item) }
+                } header: {
+                    sectionHeader("ピン留め", systemImage: "pin.fill")
+                }
             }
-            .onDelete(perform: deleteFiltered)
+            Section {
+                ForEach(unpinned) { item in itemRow(item) }
+            } header: {
+                if !pinned.isEmpty {
+                    sectionHeader("その他", systemImage: "tray")
+                }
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .searchable(text: $query, prompt: "メモを検索")
+    }
+
+    private func itemRow(_ item: VaultItem) -> some View {
+        Button { editing = item } label: { row(for: item) }
+            .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                Button {
+                    state.togglePin(item.id)
+                } label: {
+                    Label(item.isPinned ? "解除" : "ピン留め",
+                          systemImage: item.isPinned ? "pin.slash" : "pin")
+                }
+                .tint(Theme.accent)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button(role: .destructive) {
+                    state.delete(ids: [item.id])
+                } label: {
+                    Label("削除", systemImage: "trash")
+                }
+            }
+    }
+
+    private func sectionHeader(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.white.opacity(0.55))
+            .textCase(nil)
     }
 
     private func row(for item: VaultItem) -> some View {
@@ -86,9 +145,23 @@ struct VaultListView: View {
                 .frame(width: 4)
                 .frame(maxHeight: .infinity)
             VStack(alignment: .leading, spacing: 5) {
-                Text(item.title.isEmpty ? "（無題）" : item.title)
-                    .font(.headline)
-                    .foregroundStyle(.white)
+                HStack(spacing: 6) {
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(Theme.accentSoft)
+                    }
+                    Text(item.title.isEmpty ? "（無題）" : item.title)
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    if let folder = item.folder {
+                        Text(folder)
+                            .font(.caption2)
+                            .padding(.horizontal, 7).padding(.vertical, 2)
+                            .background(Color.white.opacity(0.10), in: Capsule())
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                }
                 if !item.body.isEmpty {
                     Text(item.body)
                         .font(.subheadline)
@@ -102,6 +175,30 @@ struct VaultListView: View {
             Spacer(minLength: 0)
         }
         .card()
+    }
+
+    private var filterMenu: some View {
+        Menu {
+            Picker("並び順", selection: $sortOrder) {
+                ForEach(NoteSortOrder.allCases) { order in
+                    Text(order.rawValue).tag(order)
+                }
+            }
+            if !allFolders.isEmpty {
+                Divider()
+                Picker("フォルダ", selection: $selectedFolder) {
+                    Text("すべてのフォルダ").tag(String?.none)
+                    ForEach(allFolders, id: \.self) { folder in
+                        Label(folder, systemImage: "folder").tag(String?.some(folder))
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: selectedFolder == nil
+                  ? "line.3.horizontal.decrease.circle"
+                  : "line.3.horizontal.decrease.circle.fill")
+                .font(.headline)
+        }
     }
 
     private var decoyBadge: some View {
@@ -155,13 +252,5 @@ struct VaultListView: View {
                 .foregroundStyle(active ? Color.white : Color.white.opacity(0.75))
         }
         .buttonStyle(.plain)
-    }
-
-    private func deleteFiltered(at offsets: IndexSet) {
-        let ids = offsets.map { filtered[$0].id }
-        let originalOffsets = IndexSet(state.items.enumerated()
-            .filter { ids.contains($0.element.id) }
-            .map { $0.offset })
-        state.delete(at: originalOffsets)
     }
 }

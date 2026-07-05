@@ -25,7 +25,8 @@ enum VaultManager {
         let salt = CryptoService.makeSalt()
         let key = CryptoService.deriveKey(pin: pin, salt: salt)
         let verifier = try CryptoService.encrypt(verifierToken, key: key)
-        let blob = try encodeAndEncrypt(seed, key: key)
+        let data = try JSONEncoder().encode(PersistedVault(items: seed))
+        let blob = try CryptoService.encrypt(data, key: key)
 
         KeychainStore.set(salt, for: saltAccount(kind))
         KeychainStore.set(verifier, for: verifierAccount(kind))
@@ -53,31 +54,32 @@ enum VaultManager {
         resolve(pin: pin) != nil
     }
 
-    static func loadItems(kind: VaultKind, key: SymmetricKey) -> [VaultItem] {
+    static func loadVault(kind: VaultKind, key: SymmetricKey) -> PersistedVault {
         guard let blob = FileStore.read(dataFile(kind)),
               let plain = try? CryptoService.decrypt(blob, key: key),
               let vault = try? JSONDecoder().decode(PersistedVault.self, from: plain) else {
-            return []
+            return PersistedVault(items: [])
         }
-        return vault.items.sorted { $0.updatedAt > $1.updatedAt }
+        return vault
     }
 
     @discardableResult
-    static func saveItems(_ items: [VaultItem], kind: VaultKind, key: SymmetricKey) -> Bool {
-        guard let blob = try? encodeAndEncrypt(items, key: key) else { return false }
+    static func saveVault(_ vault: PersistedVault, kind: VaultKind, key: SymmetricKey) -> Bool {
+        guard let data = try? JSONEncoder().encode(vault),
+              let blob = try? CryptoService.encrypt(data, key: key) else { return false }
         return FileStore.write(blob, name: dataFile(kind))
     }
 
     /// PIN変更: 新しいソルト・鍵で検証トークンと本体を暗号化し直す。
     static func changePIN(kind: VaultKind, oldKey: SymmetricKey, newPIN: String) throws -> SymmetricKey {
-        let items = loadItems(kind: kind, key: oldKey)
+        let vault = loadVault(kind: kind, key: oldKey)
         let salt = CryptoService.makeSalt()
         let newKey = CryptoService.deriveKey(pin: newPIN, salt: salt)
         let verifier = try CryptoService.encrypt(verifierToken, key: newKey)
 
         KeychainStore.set(salt, for: saltAccount(kind))
         KeychainStore.set(verifier, for: verifierAccount(kind))
-        saveItems(items, kind: kind, key: newKey)
+        saveVault(vault, kind: kind, key: newKey)
         return newKey
     }
 
@@ -94,8 +96,4 @@ enum VaultManager {
         FileStore.deleteAll()
     }
 
-    private static func encodeAndEncrypt(_ items: [VaultItem], key: SymmetricKey) throws -> Data {
-        let data = try JSONEncoder().encode(PersistedVault(items: items))
-        return try CryptoService.encrypt(data, key: key)
-    }
 }

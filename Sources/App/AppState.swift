@@ -18,6 +18,10 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
 
     private var key: SymmetricKey?
+    private var tombstones: [Tombstone] = []
+
+    /// トゥームストーンの保持期間。これより古いものは保存時に破棄する。
+    private static let tombstoneRetention: TimeInterval = 90 * 86_400
 
     var biometricAvailable: Bool { BiometricKeyStore.isAvailable }
     var isDecoySession: Bool { activeKind == .decoy }
@@ -65,17 +69,28 @@ final class AppState: ObservableObject {
         key = nil
         activeKind = nil
         items = []
+        tombstones = []
         errorMessage = nil
         phase = .locked
     }
 
     private func activate(kind: VaultKind, key: SymmetricKey) {
+        let vault = VaultManager.loadVault(kind: kind, key: key)
         self.key = key
         self.activeKind = kind
-        self.items = VaultManager.loadItems(kind: kind, key: key)
+        self.items = vault.items.sorted { $0.updatedAt > $1.updatedAt }
+        self.tombstones = vault.tombstones
         self.errorMessage = nil
         self.phase = .unlocked
         syncFromCloud()
+    }
+
+    /// 現在の items + tombstones をローカルに暗号化保存する。
+    private func persist() {
+        guard let key, let kind = activeKind else { return }
+        let cutoff = Date().addingTimeInterval(-Self.tombstoneRetention)
+        tombstones.removeAll { $0.deletedAt < cutoff }
+        VaultManager.saveVault(PersistedVault(items: items, tombstones: tombstones), kind: kind, key: key)
     }
 
     // MARK: - iCloud 同期
@@ -86,7 +101,8 @@ final class AppState: ObservableObject {
         if on { syncFromCloud() }
     }
 
-    /// リモートを取得してローカルとマージ（item単位、updatedAtが新しい方を採用）、その後アップロード。
+    /// リモートを取得してローカルとマージし、その後アップロード。
+    /// item単位の last-writer-wins + トゥームストーンで削除も正しく伝播する。
     func syncFromCloud() {
         guard iCloudSyncEnabled, let key, let kind = activeKind else { return }
         Task {
@@ -94,10 +110,14 @@ final class AppState: ObservableObject {
             if let blob = try? await CloudSyncService.shared.fetchBlob(kind: kind),
                let plain = try? CryptoService.decrypt(blob, key: key),
                let remote = try? JSONDecoder().decode(PersistedVault.self, from: plain) {
-                let merged = Self.merge(local: items, remote: remote.items)
-                if merged != items {
-                    items = merged.sorted { $0.updatedAt > $1.updatedAt }
-                    VaultManager.saveItems(items, kind: kind, key: key)
+                let merged = Self.merge(
+                    local: PersistedVault(items: items, tombstones: tombstones),
+                    remote: remote
+                )
+                if merged.items != items || merged.tombstones != tombstones {
+                    items = merged.items.sorted { $0.updatedAt > $1.updatedAt }
+                    tombstones = merged.tombstones
+                    persist()
                 }
             }
             pushToCloud()
@@ -106,33 +126,58 @@ final class AppState: ObservableObject {
 
     private func pushToCloud() {
         guard iCloudSyncEnabled, let key, let kind = activeKind else { return }
-        let snapshot = items
+        let snapshot = PersistedVault(items: items, tombstones: tombstones)
         Task {
             guard await CloudSyncService.shared.accountAvailable() else { return }
-            if let data = try? JSONEncoder().encode(PersistedVault(items: snapshot)),
+            if let data = try? JSONEncoder().encode(snapshot),
                let blob = try? CryptoService.encrypt(data, key: key) {
                 try? await CloudSyncService.shared.uploadBlob(blob, kind: kind)
             }
         }
     }
 
-    private static func merge(local: [VaultItem], remote: [VaultItem]) -> [VaultItem] {
+    /// マージ規則:
+    /// 1. トゥームストーンは両側の和集合（同一IDは新しい deletedAt を採用）。
+    /// 2. itemは last-writer-wins（updatedAt が新しい方）。
+    /// 3. トゥームストーンの deletedAt >= item の updatedAt なら削除が勝つ。
+    ///    itemの方が新しい（削除後に別端末で編集された）場合はitemが勝ち、トゥームストーンを破棄。
+    static func merge(local: PersistedVault, remote: PersistedVault) -> PersistedVault {
+        var deadAt: [UUID: Date] = [:]
+        for t in local.tombstones + remote.tombstones {
+            if let existing = deadAt[t.id] {
+                deadAt[t.id] = max(existing, t.deletedAt)
+            } else {
+                deadAt[t.id] = t.deletedAt
+            }
+        }
+
         var byID: [UUID: VaultItem] = [:]
-        for item in local { byID[item.id] = item }
-        for item in remote {
+        for item in local.items { byID[item.id] = item }
+        for item in remote.items {
             if let existing = byID[item.id] {
                 if item.updatedAt > existing.updatedAt { byID[item.id] = item }
             } else {
                 byID[item.id] = item
             }
         }
-        return Array(byID.values)
+
+        var survivors: [VaultItem] = []
+        for item in byID.values {
+            if let died = deadAt[item.id], died >= item.updatedAt {
+                continue // 削除が勝ち
+            }
+            deadAt.removeValue(forKey: item.id) // itemが勝ったので墓標を破棄
+            survivors.append(item)
+        }
+
+        let mergedTombstones = deadAt.map { Tombstone(id: $0.key, deletedAt: $0.value) }
+        return PersistedVault(items: survivors, tombstones: mergedTombstones)
     }
 
     // MARK: - メモ CRUD
 
     func upsert(_ item: VaultItem) {
-        guard let key, let kind = activeKind else { return }
+        guard key != nil, activeKind != nil else { return }
         var updated = item
         updated.updatedAt = Date()
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
@@ -141,14 +186,28 @@ final class AppState: ObservableObject {
             items.insert(updated, at: 0)
         }
         items.sort { $0.updatedAt > $1.updatedAt }
-        VaultManager.saveItems(items, kind: kind, key: key)
+        // 復活させた場合に備え、同IDの墓標は除去
+        tombstones.removeAll { $0.id == item.id }
+        persist()
         pushToCloud()
     }
 
-    func delete(at offsets: IndexSet) {
-        guard let key, let kind = activeKind else { return }
-        items.remove(atOffsets: offsets)
-        VaultManager.saveItems(items, kind: kind, key: key)
+    func delete(ids: [UUID]) {
+        guard key != nil, activeKind != nil else { return }
+        let now = Date()
+        for id in ids where items.contains(where: { $0.id == id }) {
+            tombstones.append(Tombstone(id: id, deletedAt: now))
+        }
+        items.removeAll { ids.contains($0.id) }
+        persist()
+        pushToCloud()
+    }
+
+    func togglePin(_ id: UUID) {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        items[idx].isPinned.toggle()
+        items[idx].updatedAt = Date()
+        persist()
         pushToCloud()
     }
 
@@ -228,6 +287,7 @@ final class AppState: ObservableObject {
         key = nil
         activeKind = nil
         items = []
+        tombstones = []
         biometricEnabled = false
         iCloudSyncEnabled = false
         errorMessage = nil

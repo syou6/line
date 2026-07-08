@@ -1,0 +1,112 @@
+name: PrivacyVault
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  developmentLanguage: ja
+
+targets:
+  PrivacyVault:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    dependencies:
+      - target: PrivacyVaultWidget
+      - target: ShareExtension
+    info:
+      path: Sources/Resources/Info.generated.plist
+      properties:
+        CFBundleDisplayName: プライベートメモ
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        NSFaceIDUsageDescription: 保管したメモのロック解除にFace ID / Touch IDを使用します。
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+    entitlements:
+      path: Sources/Resources/PrivacyVault.entitlements
+      properties:
+        com.apple.developer.icloud-services:
+          - CloudKit
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.example.privacyvault
+        com.apple.developer.ubiquity-container-identifiers:
+          - iCloud.com.example.privacyvault
+        com.apple.security.application-groups:
+          - group.com.example.privacyvault
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.privacyvault
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "5.0"
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_STYLE: Automatic
+
+  PrivacyVaultWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widget
+      - path: Sources/Shared/AppGroup.swift
+    info:
+      path: Widget/Info.generated.plist
+      properties:
+        CFBundleDisplayName: プライベートメモ
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widget/Widget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.example.privacyvault
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.privacyvault.widget
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+      - path: Sources/Shared
+      - path: Sources/Security/KeychainStore.swift
+      - path: Sources/Security/CryptoService.swift
+      - path: Sources/Models/VaultItem.swift
+    info:
+      path: ShareExtension/Info.generated.plist
+      properties:
+        CFBundleDisplayName: プライベートメモに保存
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsText: true
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsWebPageWithMaxCount: 1
+    entitlements:
+      path: ShareExtension/ShareExtension.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.example.privacyvault
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.privacyvault.share
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic

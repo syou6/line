@@ -1,0 +1,26 @@
+{
+  "sourceLanguage" : "ja",
+  "strings" : {
+    "CFBundleDisplayName" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : { "state" : "translated", "value" : "Private Memo" }
+        },
+        "ja" : {
+          "stringUnit" : { "state" : "translated", "value" : "プライベートメモ" }
+        }
+      }
+    },
+    "NSFaceIDUsageDescription" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : { "state" : "translated", "value" : "Face ID / Touch ID is used to unlock your saved notes." }
+        },
+        "ja" : {
+          "stringUnit" : { "state" : "translated", "value" : "保管したメモのロック解除にFace ID / Touch IDを使用します。" }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

@@ -51,7 +51,6 @@ enum BiometricKeyStore {
     /// Keychainへのアクセスがブロッキングなので、呼び出し側はバックグラウンドで実行すること。
     static func load(reason: String) -> Data? {
         let context = LAContext()
-        context.localizedReason = reason
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -59,7 +58,8 @@ enum BiometricKeyStore {
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: context
+            kSecUseAuthenticationContext as String: context,
+            kSecUseOperationPrompt as String: reason
         ]
         var out: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess else { return nil }

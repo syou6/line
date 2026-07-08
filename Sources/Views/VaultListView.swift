@@ -64,10 +64,10 @@ struct VaultListView: View {
             }
             .navigationTitle(selectedFolder ?? "メモ")
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .navigationBarLeading) {
                     if state.isDecoySession { decoyBadge }
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
                     filterMenu
                     Button { showingNew = true } label: {
                         Image(systemName: "plus")

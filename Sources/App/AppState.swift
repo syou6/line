@@ -15,6 +15,11 @@ final class AppState: ObservableObject {
     @Published private(set) var items: [VaultItem] = []
     @Published private(set) var biometricEnabled: Bool
     @Published private(set) var iCloudSyncEnabled: Bool
+    @Published private(set) var attempts: AttemptState
+    @Published private(set) var autoWipeEnabled: Bool
+    @Published var autoLockGrace: AutoLockGrace {
+        didSet { UserDefaults.standard.set(autoLockGrace.rawValue, forKey: AutoLockGrace.storageKey) }
+    }
     @Published var errorMessage: String?
 
     private var key: SymmetricKey?
@@ -23,14 +28,58 @@ final class AppState: ObservableObject {
     /// トゥームストーンの保持期間。これより古いものは保存時に破棄する。
     private static let tombstoneRetention: TimeInterval = 90 * 86_400
 
+    private static let attemptsKey = "attemptState"
+    private static let autoWipeKey = "autoWipeEnabled"
+    /// 自動消去を有効にした場合の失敗回数しきい値。
+    static let autoWipeThreshold = 10
+
     var biometricAvailable: Bool { BiometricKeyStore.isAvailable }
     var isDecoySession: Bool { activeKind == .decoy }
     var decoyConfigured: Bool { VaultManager.isSetup(.decoy) }
+
+    private var lockoutPolicy: LockoutPolicy {
+        LockoutPolicy(autoWipeAttempts: autoWipeEnabled ? Self.autoWipeThreshold : nil)
+    }
 
     init() {
         phase = VaultManager.isSetup(.primary) ? .locked : .needsSetup
         biometricEnabled = BiometricKeyStore.isEnabled
         iCloudSyncEnabled = CloudSyncService.isEnabled
+        autoWipeEnabled = UserDefaults.standard.bool(forKey: Self.autoWipeKey)
+        autoLockGrace = AutoLockGrace(rawValue: UserDefaults.standard.integer(forKey: AutoLockGrace.storageKey)) ?? .immediate
+        if let data = UserDefaults.standard.data(forKey: Self.attemptsKey),
+           let decoded = try? JSONDecoder().decode(AttemptState.self, from: data) {
+            attempts = decoded
+        } else {
+            attempts = AttemptState()
+        }
+    }
+
+    // MARK: - ロックアウト
+
+    /// 現在のロックアウト残り秒（0なら解除済み）。
+    func lockoutRemaining(now: Date = Date()) -> TimeInterval {
+        attempts.remainingLockout(policy: lockoutPolicy, now: now)
+    }
+
+    private func persistAttempts() {
+        if let data = try? JSONEncoder().encode(attempts) {
+            UserDefaults.standard.set(data, forKey: Self.attemptsKey)
+        }
+    }
+
+    private func registerFailure() {
+        attempts.failed += 1
+        attempts.lastFailure = Date()
+        persistAttempts()
+        if lockoutPolicy.shouldWipe(failedAttempts: attempts.failed) {
+            wipeEverything()
+        }
+    }
+
+    private func resetAttempts() {
+        attempts = AttemptState()
+        persistAttempts()
     }
 
     // MARK: - 解錠 / 施錠
@@ -45,17 +94,35 @@ final class AppState: ObservableObject {
     }
 
     func unlock(pin: String) {
+        let remaining = lockoutRemaining()
+        if remaining > 0 {
+            errorMessage = "試行回数が上限に達しました。\(Self.formatDuration(remaining))後に再試行できます。"
+            return
+        }
         // PBKDF2(20万回)は重いのでメインスレッドから逃がす
         Task.detached(priority: .userInitiated) {
             let resolved = VaultManager.resolve(pin: pin)
             await MainActor.run {
                 guard let (kind, key) = resolved else {
-                    self.errorMessage = "PINが違います"
+                    self.registerFailure()
+                    let left = self.lockoutRemaining()
+                    if left > 0 {
+                        self.errorMessage = "試行回数が上限に達しました。\(Self.formatDuration(left))後に再試行できます。"
+                    } else {
+                        self.errorMessage = "PINが違います"
+                    }
                     return
                 }
+                self.resetAttempts()
                 self.activate(kind: kind, key: key)
             }
         }
+    }
+
+    static func formatDuration(_ seconds: TimeInterval) -> String {
+        let s = Int(seconds.rounded(.up))
+        if s >= 60 { return "\(s / 60)分\(s % 60 > 0 ? "\(s % 60)秒" : "")" }
+        return "\(s)秒"
     }
 
     func unlockWithBiometrics() {
@@ -179,7 +246,48 @@ final class AppState: ObservableObject {
         pushToCloud()
     }
 
+    // MARK: - バックアップ
+
+    /// 現在の保管庫をパスフレーズで暗号化してエクスポートする。
+    func exportBackup(passphrase: String) -> Data? {
+        let vault = PersistedVault(items: items, tombstones: tombstones)
+        do {
+            return try BackupCodec.export(vault: vault, passphrase: passphrase)
+        } catch {
+            errorMessage = "バックアップの作成に失敗しました"
+            return nil
+        }
+    }
+
+    /// バックアップを読み込み、現在の保管庫にマージする。
+    /// 戻り値は取り込んだ（新規/更新された）メモ件数。失敗時は nil。
+    func importBackup(data: Data, passphrase: String) -> Int? {
+        guard let key, let kind = activeKind else { return nil }
+        do {
+            let incoming = try BackupCodec.import(data: data, passphrase: passphrase)
+            let before = Set(items.map { $0.id })
+            let merged = VaultMerge.merge(
+                local: PersistedVault(items: items, tombstones: tombstones),
+                remote: incoming
+            )
+            items = merged.items.sorted { $0.updatedAt > $1.updatedAt }
+            tombstones = merged.tombstones
+            VaultManager.saveVault(PersistedVault(items: items, tombstones: tombstones), kind: kind, key: key)
+            pushToCloud()
+            let added = items.filter { !before.contains($0.id) }.count
+            return added
+        } catch {
+            errorMessage = (error as? BackupError)?.errorDescription ?? "読み込みに失敗しました"
+            return nil
+        }
+    }
+
     // MARK: - 設定
+
+    func setAutoWipe(_ on: Bool) {
+        autoWipeEnabled = on
+        UserDefaults.standard.set(on, forKey: Self.autoWipeKey)
+    }
 
     /// PIN変更（現在開いている保管庫が対象）。
     func changePIN(to newPIN: String) -> Bool {
@@ -259,6 +367,17 @@ final class AppState: ObservableObject {
         biometricEnabled = false
         iCloudSyncEnabled = false
         errorMessage = nil
+        resetAttempts()
         phase = .needsSetup
+    }
+
+    // MARK: - 自動ロック
+
+    /// バックグラウンド復帰時、猶予を超えていれば施錠する。
+    func evaluateAutoLock(backgroundedAt: Date?, now: Date = Date()) {
+        guard phase == .unlocked else { return }
+        if AutoLock.shouldLock(backgroundedAt: backgroundedAt, now: now, grace: autoLockGrace) {
+            lock()
+        }
     }
 }

@@ -5,6 +5,7 @@ struct SettingsView: View {
 
     @State private var showChangePIN = false
     @State private var showDecoySetup = false
+    @State private var showBackup = false
     @State private var confirmWipe = false
     @State private var confirmRemoveDecoy = false
     @State private var toast: String?
@@ -18,7 +19,9 @@ struct SettingsView: View {
                     if state.biometricAvailable && !state.isDecoySession {
                         biometricSection
                     }
+                    autoLockSection
                     iCloudSection
+                    backupSection
                     if !state.isDecoySession {
                         decoySection
                     }
@@ -37,6 +40,9 @@ struct SettingsView: View {
                 PINSetupSheet(title: "おとりPIN", subtitle: "本来のPINとは別の6桁") { pin in
                     toast = state.setupDecoy(pin: pin) ? "おとり保管庫を設定しました" : (state.errorMessage ?? "設定できませんでした")
                 }
+            }
+            .sheet(isPresented: $showBackup) {
+                BackupView()
             }
             .alert("全データを消去しますか？", isPresented: $confirmWipe) {
                 Button("消去する", role: .destructive) { state.wipeEverything() }
@@ -79,6 +85,39 @@ struct SettingsView: View {
             }
         } footer: {
             Text("Face ID / Touch ID でロックを解除します。鍵は生体認証付きのKeychainに保管されます。")
+        }
+    }
+
+    private var autoLockSection: some View {
+        Section {
+            Picker(selection: autoLockBinding) {
+                ForEach(AutoLockGrace.allCases) { g in
+                    Text(g.label).tag(g)
+                }
+            } label: {
+                settingRow("自動ロック", systemImage: "clock.fill", tint: Theme.accent)
+            }
+            if !state.isDecoySession {
+                Toggle(isOn: autoWipeBinding) {
+                    settingRow("10回失敗で全消去", systemImage: "flame.fill", tint: .red)
+                }
+            }
+        } header: {
+            Text("ロック")
+        } footer: {
+            Text("バックグラウンドに移ってから指定時間でロックします。\("10回失敗で全消去")を有効にすると、誤ったPINが10回入力された時点で全データを自動消去します（既定はオフ）。誤入力が続くと段階的に待機時間が延びます。")
+        }
+    }
+
+    private var backupSection: some View {
+        Section {
+            Button {
+                showBackup = true
+            } label: {
+                settingRow("バックアップ / 復元", systemImage: "externaldrive.fill", tint: Theme.accent)
+            }
+        } footer: {
+            Text("パスフレーズで暗号化したファイルを書き出し／読み込みできます。機種変更時の移行にも使えます。")
         }
     }
 
@@ -178,6 +217,20 @@ struct SettingsView: View {
         Binding(
             get: { state.iCloudSyncEnabled },
             set: { state.setICloudSync($0) }
+        )
+    }
+
+    private var autoWipeBinding: Binding<Bool> {
+        Binding(
+            get: { state.autoWipeEnabled },
+            set: { state.setAutoWipe($0) }
+        )
+    }
+
+    private var autoLockBinding: Binding<AutoLockGrace> {
+        Binding(
+            get: { state.autoLockGrace },
+            set: { state.autoLockGrace = $0 }
         )
     }
 }

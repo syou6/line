@@ -130,6 +130,82 @@ do {
     expect(back?.tombstones.count == 1, "墓標も保持")
 }
 
+// MARK: - ロックアウト方針
+
+print("10. ロックアウトのバックオフ")
+do {
+    let p = LockoutPolicy(freeAttempts: 5)
+    expect(p.lockoutDuration(failedAttempts: 5) == 0, "5回までは遅延なし")
+    expect(p.lockoutDuration(failedAttempts: 6) == 30, "6回目=30秒")
+    expect(p.lockoutDuration(failedAttempts: 7) == 60, "7回目=60秒")
+    expect(p.lockoutDuration(failedAttempts: 8) == 120, "8回目=120秒")
+    expect(p.lockoutDuration(failedAttempts: 30) == 3600, "上限は3600秒で頭打ち")
+}
+
+print("11. 自動消去しきい値")
+do {
+    let off = LockoutPolicy(autoWipeAttempts: nil)
+    expect(!off.shouldWipe(failedAttempts: 100), "nilなら消去しない")
+    let on = LockoutPolicy(autoWipeAttempts: 10)
+    expect(!on.shouldWipe(failedAttempts: 9), "9回では消去しない")
+    expect(on.shouldWipe(failedAttempts: 10), "10回で消去")
+}
+
+print("12. 残りロックアウト時間の計算")
+do {
+    let p = LockoutPolicy(freeAttempts: 5)
+    var st = AttemptState(failed: 6, lastFailure: at(0)) // 30秒ロック
+    expect(st.isLockedOut(policy: p, now: at(0)), "直後はロック中")
+    expect(st.remainingLockout(policy: p, now: base.addingTimeInterval(10)) == 20, "10秒後は残り20秒")
+    expect(!st.isLockedOut(policy: p, now: base.addingTimeInterval(30)), "30秒後は解除")
+    st.failed = 3
+    expect(!st.isLockedOut(policy: p, now: at(0)), "free以内はロックされない")
+}
+
+// MARK: - 自動ロック猶予
+
+print("13. 自動ロックの猶予判定")
+do {
+    expect(AutoLock.shouldLock(backgroundedAt: at(0), now: at(0), grace: .immediate), "即時は常にロック")
+    expect(!AutoLock.shouldLock(backgroundedAt: at(0), now: base.addingTimeInterval(30), grace: .oneMinute),
+           "1分猶予・30秒後はロックしない")
+    expect(AutoLock.shouldLock(backgroundedAt: at(0), now: base.addingTimeInterval(60), grace: .oneMinute),
+           "1分猶予・60秒後はロック")
+    expect(!AutoLock.shouldLock(backgroundedAt: nil, now: at(0), grace: .fiveMinutes),
+           "背景時刻不明なら猶予ありではロックしない")
+}
+
+// MARK: - バックアップ ヘッダ検証
+
+print("14. バックアップのヘッダ検証")
+do {
+    let ok = BackupEnvelope(format: "PrivacyVaultBackup", version: 1, salt: Data([1]), ciphertext: Data([2]))
+    var threw = false
+    do { try BackupFormat.validateHeader(ok) } catch { threw = true }
+    expect(!threw, "正しいヘッダは通る")
+
+    let badFormat = BackupEnvelope(format: "Other", version: 1, salt: Data(), ciphertext: Data())
+    var e1: BackupError?
+    do { try BackupFormat.validateHeader(badFormat) } catch { e1 = error as? BackupError }
+    expect(e1 == .wrongFormat, "形式違いは wrongFormat")
+
+    let future = BackupEnvelope(format: "PrivacyVaultBackup", version: 99, salt: Data(), ciphertext: Data())
+    var e2: BackupError?
+    do { try BackupFormat.validateHeader(future) } catch { e2 = error as? BackupError }
+    expect(e2 == .unsupportedVersion, "新バージョンは unsupportedVersion")
+}
+
+print("15. BackupEnvelopeのJSONラウンドトリップ(Dataはbase64)")
+do {
+    let env = BackupEnvelope(format: "PrivacyVaultBackup", version: 1,
+                             salt: Data([0,1,2,3]), ciphertext: Data([9,8,7]))
+    let data = try! JSONEncoder().encode(env)
+    let json = String(data: data, encoding: .utf8) ?? ""
+    expect(json.contains("\"salt\""), "saltフィールドが存在")
+    let back = try? JSONDecoder().decode(BackupEnvelope.self, from: data)
+    expect(back == env, "ラウンドトリップで一致")
+}
+
 print("")
 print("結果: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

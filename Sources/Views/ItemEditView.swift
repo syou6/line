@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 
 /// メモの新規作成 / 編集シート。item==nil で新規。
 struct ItemEditView: View {

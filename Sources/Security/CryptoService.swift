@@ -1,6 +1,7 @@
 import Foundation
 import CommonCrypto
 import CryptoKit
+import Security
 
 enum CryptoError: Error {
     case sealFailed

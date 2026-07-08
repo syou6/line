@@ -206,6 +206,84 @@ do {
     expect(back == env, "ラウンドトリップで一致")
 }
 
+// MARK: - リッチメモ（チェックリスト・添付）
+
+print("16. checklist/attachments 無しの旧JSONが読める")
+do {
+    let legacy = """
+    {"items":[{"id":"\(UUID().uuidString)","title":"t","body":"b","tags":["x"],"isPinned":true,"updatedAt":700000000}]}
+    """
+    let v = try? JSONDecoder().decode(PersistedVault.self, from: Data(legacy.utf8))
+    expect(v != nil, "デコード成功")
+    expect(v?.items.first?.checklist.isEmpty == true, "checklist は空配列にフォールバック")
+    expect(v?.items.first?.attachments.isEmpty == true, "attachments は空配列にフォールバック")
+    expect(v?.items.first?.isPinned == true, "既存フィールドは維持")
+}
+
+print("17. チェックリスト進捗の計算")
+do {
+    let it = VaultItem(title: "t", body: "", checklist: [
+        ChecklistItem(text: "a", isDone: true),
+        ChecklistItem(text: "b", isDone: false),
+        ChecklistItem(text: "c", isDone: true),
+    ])
+    expect(it.checklistProgress.done == 2 && it.checklistProgress.total == 3, "2/3")
+    let empty = VaultItem(title: "t", body: "")
+    expect(empty.checklistProgress.total == 0, "空は 0/0")
+}
+
+print("18. checklist/attachmentsを含むラウンドトリップ")
+do {
+    let att = Attachment(data: Data([0xFF, 0xD8, 0xFF]))  // JPEGヘッダ風のダミー
+    let it = VaultItem(title: "t", body: "b",
+                       checklist: [ChecklistItem(text: "task", isDone: true)],
+                       attachments: [att])
+    let v = PersistedVault(items: [it])
+    let data = try! JSONEncoder().encode(v)
+    let back = try? JSONDecoder().decode(PersistedVault.self, from: data)
+    expect(back?.items.first?.checklist.first?.isDone == true, "checklist保持")
+    expect(back?.items.first?.attachments.first?.data == Data([0xFF, 0xD8, 0xFF]), "attachmentバイト保持(base64)")
+}
+
+print("19. リッチメモがマージを壊さない(LWWで新しい方が全フィールド勝つ)")
+do {
+    let id = UUID()
+    let old = VaultItem(id: id, title: "old", body: "", updatedAt: at(1))
+    let new = VaultItem(id: id, title: "new", body: "",
+                        checklist: [ChecklistItem(text: "x")],
+                        attachments: [Attachment(data: Data([1]))],
+                        updatedAt: at(2))
+    let merged = VaultMerge.merge(
+        local: PersistedVault(items: [old]),
+        remote: PersistedVault(items: [new]))
+    expect(merged.items.count == 1, "1件に統合")
+    expect(merged.items.first?.checklist.count == 1 && merged.items.first?.attachments.count == 1,
+           "新しい方のリッチ内容が採用される")
+}
+
+// MARK: - 共有受信箱
+
+print("20. 共有テキストから下書きを組み立てる")
+do {
+    let d = InboxCodec.makeDraft(from: "  買い物メモ\n牛乳とパン  ", now: at(0))
+    expect(d.title == "買い物メモ", "先頭行がタイトル")
+    expect(d.body == "買い物メモ\n牛乳とパン", "全体が本文(トリム済み)")
+    let long = InboxCodec.makeDraft(from: String(repeating: "あ", count: 100), now: at(0))
+    expect(long.title.count == 40, "タイトルは40字で切り詰め")
+}
+
+print("21. 下書きのJSONラウンドトリップと変換")
+do {
+    let d = InboxDraft(title: "t", body: "b", createdAt: at(3))
+    let data = try! InboxCodec.encode(d)
+    let back = try? InboxCodec.decode(data)
+    expect(back == d, "ラウンドトリップで一致")
+    let item = d.toVaultItem()
+    expect(item.title == "t" && item.body == "b", "VaultItemへ変換")
+    expect(item.tags == ["共有"], "共有タグが付く")
+    expect(item.updatedAt == at(3), "作成時刻を引き継ぐ")
+}
+
 print("")
 print("結果: \(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

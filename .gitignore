@@ -10,6 +10,10 @@ xcuserdata/
 # XcodeGen で生成されるファイル
 Sources/Resources/Info.generated.plist
 Sources/Resources/PrivacyVault.entitlements
+Widget/Info.generated.plist
+Widget/Widget.entitlements
+ShareExtension/Info.generated.plist
+ShareExtension/ShareExtension.entitlements
 
 # macOS
 .DS_Store

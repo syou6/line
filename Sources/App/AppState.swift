@@ -45,6 +45,7 @@ final class AppState: ObservableObject {
         phase = VaultManager.isSetup(.primary) ? .locked : .needsSetup
         biometricEnabled = BiometricKeyStore.isEnabled
         iCloudSyncEnabled = CloudSyncService.isEnabled
+        InboxStore.ensureRecipientKey()  // 共有拡張が封をするための公開鍵を公開
         autoWipeEnabled = UserDefaults.standard.bool(forKey: Self.autoWipeKey)
         autoLockGrace = AutoLockGrace(rawValue: UserDefaults.standard.integer(forKey: AutoLockGrace.storageKey)) ?? .immediate
         if let data = UserDefaults.standard.data(forKey: Self.attemptsKey),
@@ -155,7 +156,25 @@ final class AppState: ObservableObject {
         self.tombstones = vault.tombstones
         self.errorMessage = nil
         self.phase = .unlocked
+        if kind == .primary { ingestInbox() }
+        publishWidgetData()
         syncFromCloud()
+    }
+
+    /// 共有拡張から届いた下書きを取り込み、保管庫へ追加する（primaryのみ）。
+    private func ingestInbox() {
+        let drafts = InboxStore.drain()
+        guard !drafts.isEmpty else { return }
+        items.insert(contentsOf: drafts.map { $0.toVaultItem() }, at: 0)
+        items.sort { $0.updatedAt > $1.updatedAt }
+        persist()
+        pushToCloud()
+    }
+
+    /// ウィジェット用に「件数」だけを共有領域へ公開する（内容は書かない・primaryのみ）。
+    private func publishWidgetData() {
+        guard activeKind == .primary else { return }
+        AppGroup.publishNoteCount(items.count, updatedAt: Date())
     }
 
     /// 現在の items + tombstones をローカルに暗号化保存する。
@@ -164,6 +183,7 @@ final class AppState: ObservableObject {
         let cutoff = Date().addingTimeInterval(-Self.tombstoneRetention)
         tombstones.removeAll { $0.deletedAt < cutoff }
         VaultManager.saveVault(PersistedVault(items: items, tombstones: tombstones), kind: kind, key: key)
+        publishWidgetData()
     }
 
     // MARK: - iCloud 同期

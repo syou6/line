@@ -27,7 +27,7 @@ struct LockView: View {
                     }
 
                     if let msg = state.errorMessage {
-                        Text(msg)
+                        Text(LocalizedStringKey(msg))
                             .font(.footnote)
                             .foregroundStyle(Theme.accentSoft)
                             .multilineTextAlignment(.center)

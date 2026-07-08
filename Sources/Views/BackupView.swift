@@ -25,7 +25,7 @@ struct BackupView: View {
                 BrandBackground()
                 Form {
                     Picker("", selection: $mode) {
-                        ForEach(Mode.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        ForEach(Mode.allCases, id: \.self) { Text(LocalizedStringKey($0.rawValue)).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .listRowBackground(Color.clear)
@@ -51,7 +51,7 @@ struct BackupView: View {
 
                     if let message {
                         Section {
-                            Text(message)
+                            Text(LocalizedStringKey(message))
                                 .font(.footnote)
                                 .foregroundStyle(Theme.accentSoft)
                         }

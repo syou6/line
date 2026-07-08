@@ -32,7 +32,7 @@ struct SetupView: View {
                 }
 
                 if let msg = state.errorMessage {
-                    Text(msg)
+                    Text(LocalizedStringKey(msg))
                         .font(.footnote)
                         .foregroundStyle(Theme.accentSoft)
                         .padding(.bottom)

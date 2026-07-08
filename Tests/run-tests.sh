@@ -11,5 +11,6 @@ swiftc -o /tmp/privacyvault-tests \
   ../Sources/Storage/BackupFormat.swift \
   ../Sources/Security/LockoutPolicy.swift \
   ../Sources/App/AutoLock.swift \
+  ../Sources/Shared/ShareInbox.swift \
   main.swift
 /tmp/privacyvault-tests

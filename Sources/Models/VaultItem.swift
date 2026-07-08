@@ -9,6 +9,32 @@ enum VaultKind: String, CaseIterable, Codable {
     case decoy
 }
 
+/// チェックリストの1項目。
+struct ChecklistItem: Identifiable, Codable, Equatable {
+    var id: UUID
+    var text: String
+    var isDone: Bool
+
+    init(id: UUID = UUID(), text: String, isDone: Bool = false) {
+        self.id = id
+        self.text = text
+        self.isDone = isDone
+    }
+}
+
+/// 画像添付。JPEGバイト列をメモ本体と一緒に暗号化保存する。
+struct Attachment: Identifiable, Codable, Equatable {
+    var id: UUID
+    var data: Data
+    var createdAt: Date
+
+    init(id: UUID = UUID(), data: Data, createdAt: Date = Date()) {
+        self.id = id
+        self.data = data
+        self.createdAt = createdAt
+    }
+}
+
 /// 暗号化して保存する1件のメモ。
 struct VaultItem: Identifiable, Codable, Equatable {
     var id: UUID
@@ -17,6 +43,8 @@ struct VaultItem: Identifiable, Codable, Equatable {
     var tags: [String]
     var folder: String?
     var isPinned: Bool
+    var checklist: [ChecklistItem]
+    var attachments: [Attachment]
     var updatedAt: Date
 
     init(
@@ -26,6 +54,8 @@ struct VaultItem: Identifiable, Codable, Equatable {
         tags: [String] = [],
         folder: String? = nil,
         isPinned: Bool = false,
+        checklist: [ChecklistItem] = [],
+        attachments: [Attachment] = [],
         updatedAt: Date = Date()
     ) {
         self.id = id
@@ -34,11 +64,12 @@ struct VaultItem: Identifiable, Codable, Equatable {
         self.tags = tags
         self.folder = folder
         self.isPinned = isPinned
+        self.checklist = checklist
+        self.attachments = attachments
         self.updatedAt = updatedAt
     }
 
-    // tags / folder / isPinned は後から追加したフィールドのため、
-    // 旧データ（キー無し）でも読めるようにする。
+    // 後から追加したフィールドは、旧データ（キー無し）でも読めるようにする。
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -47,7 +78,14 @@ struct VaultItem: Identifiable, Codable, Equatable {
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         folder = try c.decodeIfPresent(String.self, forKey: .folder)
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        checklist = try c.decodeIfPresent([ChecklistItem].self, forKey: .checklist) ?? []
+        attachments = try c.decodeIfPresent([Attachment].self, forKey: .attachments) ?? []
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+    }
+
+    /// チェックリストの進捗（完了数, 総数）。
+    var checklistProgress: (done: Int, total: Int) {
+        (checklist.filter(\.isDone).count, checklist.count)
     }
 }
 

@@ -92,7 +92,7 @@ struct SettingsView: View {
         Section {
             Picker(selection: autoLockBinding) {
                 ForEach(AutoLockGrace.allCases) { g in
-                    Text(g.label).tag(g)
+                    Text(LocalizedStringKey(g.label)).tag(g)
                 }
             } label: {
                 settingRow("自動ロック", systemImage: "clock.fill", tint: Theme.accent)
@@ -174,7 +174,7 @@ struct SettingsView: View {
 
     // MARK: - Parts
 
-    private func settingRow(_ title: String, systemImage: String, tint: Color) -> some View {
+    private func settingRow(_ title: LocalizedStringKey, systemImage: String, tint: Color) -> some View {
         HStack(spacing: 12) {
             Image(systemName: systemImage)
                 .font(.footnote.weight(.semibold))
@@ -189,7 +189,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var toastView: some View {
         if let toast {
-            Text(toast)
+            Text(LocalizedStringKey(toast))
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16).padding(.vertical, 10)

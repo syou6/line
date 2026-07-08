@@ -131,7 +131,7 @@ struct VaultListView: View {
             }
     }
 
-    private func sectionHeader(_ title: String, systemImage: String) -> some View {
+    private func sectionHeader(_ title: LocalizedStringKey, systemImage: String) -> some View {
         Label(title, systemImage: systemImage)
             .font(.caption.weight(.semibold))
             .foregroundStyle(.white.opacity(0.55))
@@ -171,6 +171,20 @@ struct VaultListView: View {
                 if !item.tags.isEmpty {
                     TagChipsView(tags: item.tags)
                 }
+                if item.checklist.count > 0 || item.attachments.count > 0 {
+                    HStack(spacing: 12) {
+                        if item.checklist.count > 0 {
+                            let p = item.checklistProgress
+                            Label("\(p.done)/\(p.total)", systemImage: "checklist")
+                                .foregroundStyle(p.done == p.total ? Theme.accentSoft : .white.opacity(0.5))
+                        }
+                        if item.attachments.count > 0 {
+                            Label("\(item.attachments.count)", systemImage: "paperclip")
+                                .foregroundStyle(.white.opacity(0.5))
+                        }
+                    }
+                    .font(.caption2)
+                }
             }
             Spacer(minLength: 0)
         }
@@ -181,7 +195,7 @@ struct VaultListView: View {
         Menu {
             Picker("並び順", selection: $sortOrder) {
                 ForEach(NoteSortOrder.allCases) { order in
-                    Text(order.rawValue).tag(order)
+                    Text(LocalizedStringKey(order.rawValue)).tag(order)
                 }
             }
             if !allFolders.isEmpty {
